@@ -85,20 +85,10 @@ function App() {
     stopRecording,
     playWithEffects,
     downloadRecording,
-    updateEffect,
-    reprocessAudio,
-    cleanup,
     isProcessing,
     hasRecording,
     hasProcessedAudio
   } = audioProcessor;
-
-  // Cleanup on component unmount
-  useEffect(() => {
-    return () => {
-      if (cleanup) cleanup();
-    };
-  }, [cleanup]);
 
   const handleStartRecording = async () => {
     try {
@@ -177,18 +167,60 @@ function App() {
       [effectName]: value
     }));
     
-    // Update the audio processor
-    updateEffect(effectName, value);
-    
-    // Reprocess audio if we have a recording
-    if (hasRecording && !isProcessing) {
-      reprocessAudio();
-    }
+    // Note: Effects will be applied when audio is next processed
+    // The current implementation doesn't support real-time effect updates
   };
 
   const handlePresetApply = (presetName) => {
-    // Placeholder for preset functionality
-    console.log('Preset applied:', presetName);
+    console.log('Applying preset:', presetName);
+    
+    let presetEffects;
+    
+    switch (presetName) {
+      case 'kanye':
+        presetEffects = {
+          pitchShift: 0,           // No pitch shift
+          autotuneStrength: 85,    // Heavy auto-tune like Kanye's style
+          reverbAmount: 40,        // Moderate reverb
+          delayTime: 200          // Medium delay
+        };
+        break;
+        
+      case 'tpain':
+        presetEffects = {
+          pitchShift: -2,         // Slight pitch down
+          autotuneStrength: 100,   // Maximum auto-tune for T-Pain effect
+          reverbAmount: 60,        // More reverb for spacey sound
+          delayTime: 150          // Quick delay
+        };
+        break;
+        
+      case 'robot':
+        presetEffects = {
+          pitchShift: -4,         // Lower pitch for robotic feel
+          autotuneStrength: 100,   // Maximum auto-tune
+          reverbAmount: 20,        // Minimal reverb for crisp robot sound
+          delayTime: 100          // Fast delay for stuttering effect
+        };
+        break;
+        
+      case 'clear':
+        presetEffects = {
+          pitchShift: 0,          // No pitch shift
+          autotuneStrength: 0,     // No auto-tune
+          reverbAmount: 0,         // No reverb
+          delayTime: 0            // No delay
+        };
+        break;
+        
+      default:
+        console.warn('Unknown preset:', presetName);
+        return;
+    }
+    
+    // Apply the preset effects
+    setEffects(presetEffects);
+    setStatus(`Applied ${presetName.toUpperCase()} preset - effects updated!`);
   };
 
   return (
