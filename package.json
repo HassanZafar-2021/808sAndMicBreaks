@@ -1,0 +1,8 @@
+{
+  "name": "808s-and-mic-breaks-workspace",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ]
+}

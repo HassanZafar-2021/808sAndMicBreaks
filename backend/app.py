@@ -376,9 +376,11 @@ def upload_and_process():
 def process_base64_audio():
     """Process audio sent as base64 data"""
     try:
+        logger.info("🎵 Received process-base64 request")
         data = request.get_json()
         
         if not data or 'audio_data' not in data:
+            logger.error("❌ No audio data in request")
             return jsonify({"error": "No audio data provided"}), 400
         
         # Get effect parameters
@@ -388,34 +390,60 @@ def process_base64_audio():
             'reverb_amount': 30,
             'delay_time': 150
         })
+        logger.info(f"🎛️ Effects: {effects}")
         
         # Decode base64 audio data
         import base64
         audio_bytes = base64.b64decode(data['audio_data'])
         
-        # Create temporary file
-        temp_input = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
+        # Log the data size for debugging
+        logger.info(f"Received audio data: {len(audio_bytes)} bytes")
+        
+        # Create temporary file - try to detect format from first few bytes
+        # WebM files start with specific magic bytes
+        if audio_bytes[:4] == b'\x1a\x45\xdf\xa3':
+            suffix = '.webm'
+        elif audio_bytes[:4] == b'RIFF':
+            suffix = '.wav'
+        elif audio_bytes[:3] == b'ID3' or audio_bytes[:2] == b'\xff\xfb':
+            suffix = '.mp3'
+        else:
+            # Default to webm as that's what MediaRecorder typically produces
+            suffix = '.webm'
+            
+        logger.info(f"Detected audio format: {suffix}")
+        
+        # Create temporary file with appropriate extension
+        temp_input = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
         temp_input.write(audio_bytes)
         temp_input.close()
         
         try:
-            # Load and process audio
+            # Load and process audio - librosa can handle multiple formats
             audio_data, sr = librosa.load(temp_input.name, sr=None)
+            logger.info(f"Loaded audio: {len(audio_data)} samples at {sr} Hz")
+            
+            if len(audio_data) == 0:
+                raise ValueError("No audio data could be loaded from the file")
+                
             processed_audio = processor.process_audio(audio_data, sr, effects)
             
             # Save processed audio
             temp_output = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
-            sf.write(temp_output.name, processed_audio, sr)
+            temp_output_name = temp_output.name
+            temp_output.close()
+            sf.write(temp_output_name, processed_audio, sr)
             
             # Read processed audio and encode as base64
-            with open(temp_output.name, 'rb') as f:
+            with open(temp_output_name, 'rb') as f:
                 processed_bytes = f.read()
                 processed_b64 = base64.b64encode(processed_bytes).decode('utf-8')
             
             # Clean up
             os.unlink(temp_input.name)
-            os.unlink(temp_output.name)
+            os.unlink(temp_output_name)
             
+            logger.info("✅ Audio processing completed successfully")
             return jsonify({
                 "processed_audio": processed_b64,
                 "sample_rate": sr,
@@ -423,8 +451,11 @@ def process_base64_audio():
             })
             
         except Exception as e:
+            # Clean up any created temp files
             if os.path.exists(temp_input.name):
                 os.unlink(temp_input.name)
+            if 'temp_output_name' in locals() and os.path.exists(temp_output_name):
+                os.unlink(temp_output_name)
             logger.error(f"Base64 processing error: {e}")
             return jsonify({"error": f"Processing failed: {str(e)}"}), 500
             

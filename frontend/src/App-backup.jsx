@@ -34,6 +34,13 @@ function App() {
     checkBackend();
   }, []);
 
+  // Cleanup on component unmount
+  useEffect(() => {
+    return () => {
+      cleanup();
+    };
+  }, [cleanup]);
+
   const {
     startRecording,
     stopRecording,
@@ -41,6 +48,7 @@ function App() {
     downloadRecording,
     updateEffect,
     reprocessAudio,
+    cleanup,
     isProcessing,
     hasRecording,
     hasProcessedAudio
@@ -48,18 +56,33 @@ function App() {
 
   const handleStartRecording = async () => {
     try {
+      // Force stop any previous recording first
+      if (isRecording) {
+        stopRecording();
+        setIsRecording(false);
+        // Wait a moment for cleanup
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+      
       await startRecording();
       setIsRecording(true);
       setStatus('Recording... Speak or sing into your microphone');
     } catch (error) {
+      setIsRecording(false);
       setStatus('Error: ' + error.message);
+      console.error('Recording error:', error);
     }
   };
 
   const handleStopRecording = () => {
-    stopRecording();
-    setIsRecording(false);
-    setStatus('Recording complete! Processing with auto-tune...');
+    try {
+      stopRecording();
+      setIsRecording(false);
+      setStatus('Recording complete! Processing with auto-tune...');
+    } catch (error) {
+      setIsRecording(false);
+      setStatus('Error stopping recording: ' + error.message);
+    }
   };
 
   const handlePlayback = async () => {

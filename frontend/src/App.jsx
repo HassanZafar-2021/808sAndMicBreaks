@@ -10,8 +10,10 @@ import './App.css';
 
 function App() {
   const [isRecording, setIsRecording] = useState(false);
+  const [recordingStartTime, setRecordingStartTime] = useState(null);
   const [status, setStatus] = useState("Click 'Start Recording' to begin");
   const [backendStatus, setBackendStatus] = useState('unknown');
+  const [hookError, setHookError] = useState(null);
   
   // Audio effect states
   const [effects, setEffects] = useState({
@@ -34,6 +36,50 @@ function App() {
     checkBackend();
   }, []);
 
+  // Try to use the audio processor with error handling
+  let audioProcessor;
+  try {
+    audioProcessor = useAudioProcessor(effects, setStatus);
+  } catch (error) {
+    console.error('useAudioProcessor error:', error);
+    setHookError(error.message);
+  }
+
+  // If there's a hook error, show a fallback UI
+  if (hookError) {
+    return (
+      <div className="app">
+        <Header />
+        <div className="main-content">
+          <div style={{ padding: '2rem', textAlign: 'center' }}>
+            <h2>🚨 Audio Hook Error</h2>
+            <p>Error in useAudioProcessor: {hookError}</p>
+            <p>The UI works, but audio processing failed to initialize.</p>
+            <p>This helps us debug the specific issue!</p>
+          </div>
+        </div>
+        <Footer />
+      </div>
+    );
+  }
+
+  // If no audioProcessor due to error, show safe fallback
+  if (!audioProcessor) {
+    return (
+      <div className="app">
+        <Header />
+        <div className="main-content">
+          <div style={{ padding: '2rem', textAlign: 'center' }}>
+            <h2>🔧 Safe Mode</h2>
+            <p>Audio processor failed to load. Running in safe mode.</p>
+            <p>Backend Status: {backendStatus}</p>
+          </div>
+        </div>
+        <Footer />
+      </div>
+    );
+  }
+
   const {
     startRecording,
     stopRecording,
@@ -41,25 +87,69 @@ function App() {
     downloadRecording,
     updateEffect,
     reprocessAudio,
+    cleanup,
     isProcessing,
     hasRecording,
     hasProcessedAudio
-  } = useAudioProcessor(effects, setStatus);
+  } = audioProcessor;
+
+  // Cleanup on component unmount
+  useEffect(() => {
+    return () => {
+      if (cleanup) cleanup();
+    };
+  }, [cleanup]);
 
   const handleStartRecording = async () => {
     try {
-      await startRecording();
+      // Force stop any previous recording first
+      if (isRecording) {
+        stopRecording();
+        setIsRecording(false);
+        // Wait a moment for cleanup
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+      
+      const newRecorder = await startRecording();
       setIsRecording(true);
-      setStatus('Recording... Speak or sing into your microphone');
+      setRecordingStartTime(Date.now());
+      setStatus('Recording... Speak or sing into your microphone (minimum 2 seconds)');
+      
+      // Store recorder reference for stopping
+      window.currentRecorder = newRecorder;
     } catch (error) {
+      setIsRecording(false);
       setStatus('Error: ' + error.message);
+      console.error('Recording error:', error);
     }
   };
 
   const handleStopRecording = () => {
-    stopRecording();
-    setIsRecording(false);
-    setStatus('Recording complete! Processing with auto-tune...');
+    try {
+      // Check minimum recording time (2 seconds)
+      const recordingDuration = Date.now() - recordingStartTime;
+      if (recordingDuration < 2000) {
+        setStatus(`Recording too short (${Math.round(recordingDuration/1000)}s). Please record for at least 2 seconds.`);
+        return;
+      }
+      
+      // Use the stored recorder reference if available
+      if (window.currentRecorder && window.currentRecorder.state === 'recording') {
+        console.log('🛑 Stopping current recorder directly');
+        window.currentRecorder.stop();
+        window.currentRecorder = null;
+      } else {
+        // Fallback to hook method
+        stopRecording();
+      }
+      setIsRecording(false);
+      setRecordingStartTime(null);
+      setStatus('Recording complete! Processing with auto-tune...');
+    } catch (error) {
+      setIsRecording(false);
+      setRecordingStartTime(null);
+      setStatus('Error stopping recording: ' + error.message);
+    }
   };
 
   const handlePlayback = async () => {
@@ -72,108 +162,61 @@ function App() {
     }
   };
 
-  const handleDownload = () => {
-    downloadRecording();
-    setStatus('Download started!');
+  const handleDownload = async () => {
+    try {
+      await downloadRecording();
+    } catch (error) {
+      console.error('Download error:', error);
+      setStatus('Download error: ' + error.message);
+    }
   };
 
   const handleEffectChange = (effectName, value) => {
-    setEffects(prev => ({ ...prev, [effectName]: value }));
+    setEffects(prev => ({
+      ...prev,
+      [effectName]: value
+    }));
+    
+    // Update the audio processor
     updateEffect(effectName, value);
     
-    // Auto-reprocess if we have a recording
+    // Reprocess audio if we have a recording
     if (hasRecording && !isProcessing) {
-      setTimeout(() => reprocessAudio(), 500); // Debounce reprocessing
+      reprocessAudio();
     }
   };
 
-  const applyPreset = (presetName) => {
-    let newEffects = {};
-    
-    switch (presetName) {
-      case 'kanye':
-        newEffects = {
-          pitchShift: 2,
-          autotuneStrength: 85,
-          reverbAmount: 40,
-          delayTime: 120
-        };
-        break;
-      case 'tpain':
-        newEffects = {
-          pitchShift: 4,
-          autotuneStrength: 95,
-          reverbAmount: 60,
-          delayTime: 200
-        };
-        break;
-      case 'robot':
-        newEffects = {
-          pitchShift: -8,
-          autotuneStrength: 100,
-          reverbAmount: 20,
-          delayTime: 80
-        };
-        break;
-      case 'clear':
-        newEffects = {
-          pitchShift: 0,
-          autotuneStrength: 0,
-          reverbAmount: 0,
-          delayTime: 0
-        };
-        break;
-      default:
-        return;
-    }
-    
-    setEffects(newEffects);
-    Object.entries(newEffects).forEach(([key, value]) => {
-      updateEffect(key, value);
-    });
-    setStatus(`Applied ${presetName.charAt(0).toUpperCase() + presetName.slice(1)} preset!`);
-    
-    // Auto-reprocess if we have a recording
-    if (hasRecording && !isProcessing) {
-      setTimeout(() => reprocessAudio(), 500);
-    }
+  const handlePresetApply = (presetName) => {
+    // Placeholder for preset functionality
+    console.log('Preset applied:', presetName);
   };
 
   return (
     <div className="app">
       <Header />
-      
-      {/* Backend Status Indicator */}
-      <div style={{
-        textAlign: 'center', 
-        padding: '0.5rem',
-        background: backendStatus === 'connected' ? '#28a745' : '#dc3545',
-        color: 'white',
-        fontSize: '0.9rem'
-      }}>
-        Backend Status: {backendStatus === 'connected' ? '🟢 Connected' : '🔴 Disconnected'} 
-        {backendStatus !== 'connected' && ' (Start Python server: python app.py)'}
+      <div className="main-content">
+        <div>
+          <AudioControls 
+            isRecording={isRecording}
+            hasRecording={hasRecording}
+            status={status}
+            onStartRecording={handleStartRecording}
+            onStopRecording={handleStopRecording}
+            onPlayback={handlePlayback}
+            onDownload={handleDownload}
+          />
+        </div>
+        
+        <div>
+          <EffectsPanel 
+            effects={effects}
+            onEffectChange={handleEffectChange}
+            onPresetApply={handlePresetApply}
+          />
+          
+          <InfoSection />
+        </div>
       </div>
-      
-      <main className="main-content">
-        <AudioControls
-          isRecording={isRecording}
-          hasRecording={hasRecording}
-          status={status}
-          onStartRecording={handleStartRecording}
-          onStopRecording={handleStopRecording}
-          onPlayback={handlePlayback}
-          onDownload={handleDownload}
-        />
-        
-        <EffectsPanel
-          effects={effects}
-          onEffectChange={handleEffectChange}
-          onPresetApply={applyPreset}
-        />
-        
-        <InfoSection />
-      </main>
       
       <Footer />
     </div>
