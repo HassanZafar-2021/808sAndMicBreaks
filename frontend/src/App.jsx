@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Header from './components/Header';
 import AudioControls from './components/AudioControls';
 import EffectsPanel from './components/EffectsPanel';
+import InstrumentalSelector from './components/InstrumentalSelector';
 import InfoSection from './components/InfoSection';
 import Footer from './components/Footer';
 import { useAudioProcessor } from './hooks/useAudioProcessor';
@@ -14,6 +15,8 @@ function App() {
   const [status, setStatus] = useState("Click 'Start Recording' to begin");
   const [backendStatus, setBackendStatus] = useState('unknown');
   const [hookError, setHookError] = useState(null);
+  const [selectedInstrumental, setSelectedInstrumental] = useState(null);
+  const [instrumentalVolume, setInstrumentalVolume] = useState(0.3);
   
   // Audio effect states
   const [effects, setEffects] = useState({
@@ -39,7 +42,7 @@ function App() {
   // Try to use the audio processor with error handling
   let audioProcessor;
   try {
-    audioProcessor = useAudioProcessor(effects, setStatus);
+    audioProcessor = useAudioProcessor(effects, setStatus, selectedInstrumental, instrumentalVolume);
   } catch (error) {
     console.error('useAudioProcessor error:', error);
     setHookError(error.message);
@@ -236,6 +239,13 @@ function App() {
             onStopRecording={handleStopRecording}
             onPlayback={handlePlayback}
             onDownload={handleDownload}
+          />
+          
+          <InstrumentalSelector 
+            selectedInstrumental={selectedInstrumental}
+            onInstrumentalSelect={setSelectedInstrumental}
+            isRecording={isRecording}
+            onPlaybackVolumeChange={setInstrumentalVolume}
           />
         </div>
         

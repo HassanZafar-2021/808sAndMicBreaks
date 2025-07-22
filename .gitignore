@@ -137,3 +137,39 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# =============================================================================
+# AUDIO FILES (KEEP PRIVATE FOR COPYRIGHT REASONS)
+# =============================================================================
+
+# Instrumental audio files - exclude all audio formats from instrumentals directory
+frontend/public/instrumentals/*.mp3
+frontend/public/instrumentals/*.wav
+frontend/public/instrumentals/*.m4a
+frontend/public/instrumentals/*.flac
+frontend/public/instrumentals/*.ogg
+frontend/public/instrumentals/*.aac
+frontend/public/instrumentals/*.wma
+
+# But keep the README file in instrumentals directory (explains how to add audio)
+!frontend/public/instrumentals/README.md
+
+# User recorded audio files (also keep private)
+frontend/public/recordings/
+backend/uploads/
+backend/processed/
+
+# Python cache and virtual environment files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+backend/env/
+backend/venv/
+backend/.env
+backend/.venv
+
+# Audio processing temporary files
+*.tmp
+*.temp

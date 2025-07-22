@@ -2,15 +2,63 @@ import { useState, useRef, useCallback } from 'react';
 import * as Tone from 'tone';
 import autoTuneAPI from '../utils/api';
 
-const useAudioProcessor = (effects, setStatus) => {
+const useAudioProcessor = (effects, setStatus, selectedInstrumental = null, instrumentalVolume = 0.3) => {
   const [recorder, setRecorder] = useState(null);
   const [audioBuffer, setAudioBuffer] = useState(null);
   const [recordedBlob, setRecordedBlob] = useState(null);
   const [processedBlob, setProcessedBlob] = useState(null);
   const [mediaStream, setMediaStream] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [instrumentalAudio, setInstrumentalAudio] = useState(null);
+  const [mixedRecorder, setMixedRecorder] = useState(null);
   
   const playerRef = useRef(null);
+  const instrumentalRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const mixedStreamRef = useRef(null);
+
+  // Create mixed audio stream with microphone and instrumental
+  const createMixedStream = useCallback(async (micStream, instrumentalAudio) => {
+    try {
+      // Create or reuse audio context
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      const audioContext = audioContextRef.current;
+      
+      // Resume context if suspended
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
+
+      // Create audio nodes
+      const micSource = audioContext.createMediaStreamSource(micStream);
+      const instrumentalSource = audioContext.createMediaElementSource(instrumentalAudio);
+      const gainNode = audioContext.createGain();
+      const mixNode = audioContext.createGain();
+      
+      // Set instrumental volume
+      gainNode.gain.value = instrumentalVolume;
+      
+      // Connect nodes: instrumental -> gain -> mixer
+      instrumentalSource.connect(gainNode);
+      gainNode.connect(mixNode);
+      
+      // Connect microphone directly to mixer
+      micSource.connect(mixNode);
+      
+      // Create output stream
+      const destination = audioContext.createMediaStreamDestination();
+      mixNode.connect(destination);
+      
+      console.log('✅ Audio mixing setup complete');
+      return destination.stream;
+      
+    } catch (error) {
+      console.error('❌ Error creating mixed stream:', error);
+      throw error;
+    }
+  }, [instrumentalVolume]);
 
   const initializeAudio = useCallback(async () => {
     try {
@@ -160,36 +208,173 @@ const useAudioProcessor = (effects, setStatus) => {
         await new Promise(resolve => setTimeout(resolve, 100));
       }
       
-      // initializeAudio returns the mediaRecorder directly, not wrapped in an object
-      const mediaRecorder = await initializeAudio();
+      // Get microphone stream
+      const micStream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          sampleRate: 44100
+        } 
+      });
       
-      if (mediaRecorder.state === 'inactive') {
-        console.log('▶️ Starting MediaRecorder');
-        // Start with a timeslice to ensure data is captured regularly
-        mediaRecorder.start(100); // Request data every 100ms
-        setStatus('Recording started... Speak into your microphone!');
+      let recordingStream = micStream;
+      let mediaRecorder;
+      
+      // If instrumental is selected, create mixed stream
+      if (selectedInstrumental && selectedInstrumental.audioUrl) {
+        try {
+          console.log('🎵 Setting up mixed recording with:', selectedInstrumental.title);
+          
+          // Create and setup instrumental audio
+          const audio = new Audio();
+          audio.src = selectedInstrumental.audioUrl;
+          audio.volume = instrumentalVolume;
+          audio.loop = true;
+          audio.crossOrigin = "anonymous";
+          
+          instrumentalRef.current = audio;
+          
+          // Wait for audio to be ready
+          await new Promise((resolve, reject) => {
+            audio.oncanplaythrough = resolve;
+            audio.onerror = reject;
+            audio.load();
+          });
+          
+          // Start playing instrumental
+          await audio.play();
+          console.log('✅ Instrumental playback started');
+          
+          // Create mixed stream with both mic and instrumental
+          recordingStream = await createMixedStream(micStream, audio);
+          mixedStreamRef.current = recordingStream;
+          
+          setStatus(`Recording with "${selectedInstrumental.title}" instrumental...`);
+          
+        } catch (error) {
+          console.warn('⚠️ Instrumental mixing failed, recording mic only:', error);
+          setStatus('Recording started (instrumental mixing failed)...');
+          recordingStream = micStream;
+        }
+      }
+      
+      // Create MediaRecorder with the recording stream (mixed or mic-only)
+      let mimeType = '';
+      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+        mimeType = 'audio/webm;codecs=opus';
+      } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+        mimeType = 'audio/webm';
+      } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+        mimeType = 'audio/mp4';
+      }
+      
+      mediaRecorder = new MediaRecorder(recordingStream, mimeType ? { mimeType } : {});
+      console.log('🎤 Created MediaRecorder with mimeType:', mediaRecorder.mimeType);
+      
+      const chunks = [];
+      
+      mediaRecorder.onstart = () => {
+        console.log('✅ MediaRecorder started successfully at', new Date().toLocaleTimeString());
+      };
+      
+      mediaRecorder.ondataavailable = (event) => {
+        console.log('📦 Data chunk received:', event.data.size, 'bytes');
+        chunks.push(event.data);
+      };
+      
+      mediaRecorder.onstop = async () => {
+        console.log('🛑 Recording stopped, total chunks:', chunks.length);
         
-        // Set a minimum recording duration
-        setTimeout(() => {
-          if (mediaRecorder.state === 'recording') {
-            console.log('📊 Recording has been active for 1 second');
+        if (chunks.length === 0) {
+          console.error('❌ No audio data recorded');
+          setStatus('Error: No audio data recorded');
+          return;
+        }
+        
+        const blob = new Blob(chunks, { type: mediaRecorder.mimeType });
+        console.log('📁 Created audio blob:', blob.size, 'bytes');
+        
+        if (blob.size === 0) {
+          console.error('❌ Audio blob is empty');
+          setStatus('Error: Recorded audio is empty');
+          return;
+        }
+        
+        setRecordedBlob(blob);
+        setStatus('🎵 Recording complete! Processing with auto-tune...');
+        
+        // Process the audio
+        try {
+          console.log('🔄 Processing audio with effects...');
+          
+          setIsProcessing(true);
+          const processedBlob = await autoTuneAPI.processRecording(blob, effects);
+          
+          if (processedBlob && processedBlob.size > 0) {
+            setProcessedBlob(processedBlob);
+            setStatus('✅ Processing complete! Click play to hear your auto-tuned voice');
+          } else {
+            throw new Error('No processed audio received');
           }
-        }, 1000);
+        } catch (error) {
+          console.error('❌ Processing error:', error);
+          setStatus('❌ Processing failed: ' + error.message);
+        } finally {
+          setIsProcessing(false);
+        }
+      };
+      
+      // Start recording
+      if (mediaRecorder.state === 'inactive') {
+        mediaRecorder.start(100); // Request data every 100ms
+        setRecorder(mediaRecorder);
+        
+        if (!selectedInstrumental) {
+          setStatus('Recording started... Speak into your microphone!');
+        }
+        
+        console.log('▶️ Recording started successfully');
       } else {
-        throw new Error(`MediaRecorder is not ready to start recording (state: ${mediaRecorder.state})`);
+        throw new Error(`MediaRecorder is not ready (state: ${mediaRecorder.state})`);
       }
       
       return mediaRecorder;
+      
     } catch (error) {
       console.error('❌ Error starting recording:', error);
       setStatus('Error starting recording: ' + error.message);
+      
+      // Clean up on error
+      if (instrumentalRef.current) {
+        instrumentalRef.current.pause();
+      }
+      if (mixedStreamRef.current) {
+        mixedStreamRef.current.getTracks().forEach(track => track.stop());
+      }
+      
       throw error;
     }
-  }, [recorder, initializeAudio, setStatus]);
+  }, [recorder, selectedInstrumental, instrumentalVolume, effects, createMixedStream]);
 
   const stopRecording = useCallback(() => {
     try {
       console.log('⏹️ stopRecording called...');
+      
+      // Stop instrumental playback
+      if (instrumentalRef.current) {
+        console.log('🎵 Stopping instrumental playback');
+        instrumentalRef.current.pause();
+        instrumentalRef.current.currentTime = 0;
+      }
+      
+      // Clean up mixed stream
+      if (mixedStreamRef.current) {
+        console.log('🔄 Stopping mixed audio stream');
+        mixedStreamRef.current.getTracks().forEach(track => track.stop());
+        mixedStreamRef.current = null;
+      }
+      
       if (recorder?.state === 'recording') {
         console.log('📀 MediaRecorder state before stop:', recorder.state);
         

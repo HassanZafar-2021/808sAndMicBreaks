@@ -117,19 +117,6 @@ const AudioControls = ({
           <span className="btn-icon">💾</span>
           Download
         </button>
-        {/* Debug button for testing */}
-        {hasRecording && (
-          <button 
-            className="btn" 
-            style={{background: '#6c757d', color: 'white', fontSize: '0.8rem'}}
-            onClick={() => {
-              console.log('🔍 Debug: hasRecording =', hasRecording);
-              console.log('🔍 Debug: Audio available for playback');
-            }}
-          >
-            Debug Info
-          </button>
-        )}
       </div>
     </div>
   );
